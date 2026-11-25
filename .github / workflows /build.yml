@@ -1,0 +1,414 @@
+name: Build MY AI APK
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Create Android project
+        run: |
+          mkdir -p app/src/main/java/com/myai/app
+          mkdir -p app/src/main/res/values
+
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          dependencyResolutionManagement {
+              repositoriesMode.set(
+                  RepositoriesMode.FAIL_ON_PROJECT_REPOS
+              )
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.name = "MY-AI"
+          include(":app")
+          EOF
+
+          cat > build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.7.3' apply false
+          }
+          EOF
+
+          cat > gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          EOF
+
+          cat > app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace 'com.myai.app'
+              compileSdk 35
+
+              defaultConfig {
+                  applicationId 'com.myai.app'
+                  minSdk 23
+                  targetSdk 35
+                  versionCode 1
+                  versionName '1.0'
+              }
+          }
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+
+              <uses-feature
+                  android:name="android.hardware.microphone"
+                  android:required="false"/>
+
+              <application
+                  android:theme="@android:style/Theme.Material.NoActionBar"
+                  android:label="MY AI"
+                  android:usesCleartextTraffic="true"
+                  android:allowBackup="false">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+
+                  </activity>
+
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/java/com/myai/app/MainActivity.java <<'EOF'
+          package com.myai.app;
+
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.content.Intent;
+          import android.speech.RecognizerIntent;
+          import android.speech.SpeechRecognizer;
+          import android.speech.tts.TextToSpeech;
+          import android.view.Gravity;
+          import android.view.View;
+          import android.widget.*;
+          import android.graphics.Color;
+          import android.graphics.Typeface;
+
+          import java.util.ArrayList;
+          import java.util.Locale;
+
+          public class MainActivity extends Activity {
+
+              LinearLayout chat;
+              EditText input;
+              TextToSpeech tts;
+              SpeechRecognizer recognizer;
+              boolean voiceMode = false;
+
+              int white = Color.WHITE;
+              int bg = Color.rgb(16,17,22);
+              int accent = Color.rgb(115,90,255);
+
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+
+                  tts = new TextToSpeech(this, status -> {
+                      if (status == TextToSpeech.SUCCESS) {
+                          tts.setLanguage(new Locale("hi", "IN"));
+                      }
+                  });
+
+                  buildUI();
+              }
+
+              void buildUI() {
+                  LinearLayout root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  root.setBackgroundColor(bg);
+
+                  TextView title = new TextView(this);
+                  title.setText("MY AI");
+                  title.setTextColor(white);
+                  title.setTextSize(26);
+                  title.setTypeface(null, Typeface.BOLD);
+                  title.setPadding(20,25,20,5);
+
+                  TextView subtitle = new TextView(this);
+                  subtitle.setText("Personal AI Assistant");
+                  subtitle.setTextColor(Color.LTGRAY);
+                  subtitle.setPadding(20,0,20,20);
+
+                  chat = new LinearLayout(this);
+                  chat.setOrientation(LinearLayout.VERTICAL);
+                  chat.setPadding(16,16,16,16);
+
+                  ScrollView scroll = new ScrollView(this);
+                  scroll.addView(chat);
+
+                  root.addView(title);
+                  root.addView(subtitle);
+
+                  root.addView(scroll,
+                      new LinearLayout.LayoutParams(
+                          -1, 0, 1
+                      ));
+
+                  LinearLayout controls = new LinearLayout(this);
+                  controls.setPadding(10,10,10,15);
+                  controls.setGravity(Gravity.CENTER);
+
+                  input = new EditText(this);
+                  input.setHint("अपना सवाल लिखें...");
+                  input.setTextColor(white);
+                  input.setHintTextColor(Color.GRAY);
+                  input.setSingleLine(true);
+
+                  Button send = new Button(this);
+                  send.setText("Send");
+
+                  Button mic = new Button(this);
+                  mic.setText("🎙");
+
+                  Button call = new Button(this);
+                  call.setText("Call");
+
+                  controls.addView(input,
+                      new LinearLayout.LayoutParams(0,-2,1));
+                  controls.addView(send);
+                  controls.addView(mic);
+                  controls.addView(call);
+
+                  root.addView(controls);
+
+                  setContentView(root);
+
+                  send.setOnClickListener(v -> sendMessage());
+
+                  mic.setOnClickListener(v -> startListening());
+
+                  call.setOnClickListener(v -> {
+                      voiceMode = !voiceMode;
+                      call.setText(voiceMode ? "End" : "Call");
+
+                      if (voiceMode) {
+                          addMessage("MY AI",
+                              "Voice mode शुरू हुआ। बोलिए!");
+                          startListening();
+                      } else {
+                          if (recognizer != null) {
+                              recognizer.stopListening();
+                          }
+                          if (tts != null) {
+                              tts.stop();
+                          }
+                          addMessage("MY AI",
+                              "Voice mode बंद हो गया।");
+                      }
+                  });
+
+                  addMessage("MY AI",
+                      "नमस्ते! मैं MY AI हूँ। " +
+                      "आप मुझसे हिंदी में बात कर सकते हैं।");
+              }
+
+              void sendMessage() {
+                  String text = input.getText().toString().trim();
+
+                  if (text.isEmpty()) return;
+
+                  input.setText("");
+                  addMessage("आप", text);
+
+                  String answer = getReply(text);
+                  addMessage("MY AI", answer);
+
+                  if (voiceMode && tts != null) {
+                      tts.speak(answer,
+                          TextToSpeech.QUEUE_FLUSH,
+                          null, "reply");
+                  }
+              }
+
+              String getReply(String text) {
+                  String q = text.toLowerCase();
+
+                  if (q.contains("नमस्ते") ||
+                      q.contains("hello") ||
+                      q.contains("hi")) {
+                      return "नमस्ते! बताइए, मैं आपकी क्या मदद करूँ?";
+                  }
+
+                  if (q.contains("कोड") ||
+                      q.contains("code")) {
+                      return "मैं coding assistant बनने के लिए " +
+                      "तैयार हूँ। अगले अपडेट में AI मॉडल " +
+                      "जोड़ेंगे, जिससे मैं वास्तविक code " +
+                      "बनाने और समझने में मदद कर सकूँगा।";
+                  }
+
+                  if (q.contains("नाम")) {
+                      return "मेरा नाम MY AI है।";
+                  }
+
+                  return "आपने कहा: " + text +
+                      "\\nअगले अपडेट में वास्तविक AI मॉडल " +
+                      "जोड़कर बेहतर जवाब देने की सुविधा आएगी।";
+              }
+
+              void addMessage(String who, String text) {
+                  TextView message = new TextView(this);
+
+                  message.setText(who + "\\n" + text);
+                  message.setTextColor(white);
+                  message.setTextSize(16);
+                  message.setPadding(18,14,18,14);
+
+                  LinearLayout.LayoutParams params =
+                      new LinearLayout.LayoutParams(
+                          -1, -2
+                      );
+
+                  params.setMargins(0,8,0,8);
+
+                  message.setBackgroundColor(
+                      who.equals("आप")
+                      ? Color.rgb(45,45,60)
+                      : Color.rgb(35,40,52)
+                  );
+
+                  chat.addView(message, params);
+              }
+
+              void startListening() {
+                  if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+                      addMessage("MY AI",
+                          "इस फोन में Speech Recognition उपलब्ध नहीं है।");
+                      return;
+                  }
+
+                  if (recognizer != null) {
+                      recognizer.destroy();
+                  }
+
+                  recognizer =
+                      SpeechRecognizer.createSpeechRecognizer(this);
+
+                  recognizer.setRecognitionListener(
+                      new android.speech.RecognitionListener() {
+
+                          public void onReadyForSpeech(Bundle b) {}
+                          public void onBeginningOfSpeech() {}
+                          public void onRmsChanged(float r) {}
+                          public void onBufferReceived(byte[] b) {}
+                          public void onEndOfSpeech() {}
+                          public void onEvent(int a, Bundle b) {}
+                          public void onPartialResults(Bundle b) {}
+
+                          public void onError(int error) {
+                              if (voiceMode) {
+                                  addMessage("MY AI",
+                                      "आवाज़ सुनने में समस्या हुई। " +
+                                      "फिर से बोलिए।");
+                              }
+                          }
+
+                          public void onResults(Bundle results) {
+                              ArrayList<String> matches =
+                                  results.getStringArrayList(
+                                      SpeechRecognizer.RESULTS_RECOGNITION
+                                  );
+
+                              if (matches != null &&
+                                  !matches.isEmpty()) {
+
+                                  input.setText(matches.get(0));
+                                  sendMessage();
+
+                                  if (voiceMode) {
+                                      startListening();
+                                  }
+                              }
+                          }
+                      }
+                  );
+
+                  Intent intent =
+                      new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+
+                  intent.putExtra(
+                      RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                      RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+                  );
+
+                  intent.putExtra(
+                      RecognizerIntent.EXTRA_LANGUAGE,
+                      "hi-IN"
+                  );
+
+                  intent.putExtra(
+                      RecognizerIntent.EXTRA_PARTIAL_RESULTS,
+                      true
+                  );
+
+                  recognizer.startListening(intent);
+              }
+
+              @Override
+              protected void onDestroy() {
+                  if (recognizer != null) {
+                      recognizer.destroy();
+                  }
+
+                  if (tts != null) {
+                      tts.stop();
+                      tts.shutdown();
+                  }
+
+                  super.onDestroy();
+              }
+          }
+          EOF
+
+      - name: Build APK
+        run: gradle assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MY-AI-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
